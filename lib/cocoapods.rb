@@ -51,6 +51,7 @@ module Pod
   autoload :Sandbox,                   'cocoapods/sandbox'
   autoload :Target,                    'cocoapods/target'
   autoload :Validator,                 'cocoapods/validator'
+  autoload :Builder,                   'cocoapods/builder'
 
   module Generator
     autoload :Acknowledgements,        'cocoapods/generator/acknowledgements'
