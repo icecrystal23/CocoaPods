@@ -293,10 +293,16 @@ module Pod
       else :green end
     end
 
-    # @return [Pathname] the temporary directory used by the linter.
+    # @return [Pathname] the temporary directory used by the builder.
     #
     def build_dir
       @build_dir ||= Pathname(Dir.mktmpdir(['CocoaPods-Build-', "-#{spec.name}"]))
+    end
+
+    # @return [Pathname] the temporary directory used to store compiled frameworks.
+    #
+    def frameworks_dir
+      @frameworks_dir ||= Pathname(Dir.mktmpdir(['CocoaPods-Framework-', "-#{spec.name}"]))
     end
 
     # @return [String] the SWIFT_VERSION to use for validation.
@@ -341,8 +347,8 @@ module Pod
           download_pod
           install_pod
           add_app_project_import
-          build_pod
           test_pod unless skip_tests
+          build_pod
         ensure
           tear_down_build_environment
         end
@@ -372,12 +378,15 @@ module Pod
     def setup_build_environment
       build_dir.rmtree if build_dir.exist?
       build_dir.mkpath
+      frameworks_dir.rmtree if frameworks_dir.exist?
+      frameworks_dir.mkpath
       @original_config = Config.instance.clone
       config.installation_root   = build_dir
       config.silent              = !config.verbose
     end
 
     def tear_down_build_environment
+      frameworks_dir.rmtree unless no_clean
       build_dir.rmtree unless no_clean
       Config.instance = @original_config
     end
@@ -468,26 +477,30 @@ module Pod
     # @return [void]
     #
     def build_pod
-      build_with_options('Release', true)
-      build_with_options('Debug', true)
-      build_with_options('Release', false)
-      build_with_options('Debug', false)
+      pod_target = @installer.pod_targets.find { |pt| pt.pod_name == @spec.root.name }
+      scheme = pod_target.label if pod_target.should_build?
+      if scheme.nil?
+        UI.warn "Skipping compilation with `xcodebuild` because target contains no sources.\n".yellow
+      else
+        build_scheme(scheme, 'Debug')
+        build_scheme(scheme, 'Release')
+      end
     end
 
-    def build_with_options(configuration, for_simulator)
+    def build_scheme(scheme, configuration)
+      build_with_options(scheme, configuration, true)
+      build_with_options(scheme, configuration, false)
+      make_fat_framework(scheme, configuration)
+    end
+
+    def build_with_options(scheme, configuration, for_simulator)
       if !xcodebuild_available?
         UI.warn "Skipping compilation with `xcodebuild` because it can't be found.\n".yellow
       else
         UI.message "\nBuilding configuration '#{configuration}' with `xcodebuild`#{' for simulator' if for_simulator}.\n".yellow do
-          pod_target = @installer.pod_targets.find { |pt| pt.pod_name == @spec.root.name }
-          scheme = pod_target.label if pod_target.should_build?
-          if scheme.nil?
-            UI.warn "Skipping compilation with `xcodebuild` because target contains no sources.\n".yellow
-          else
-            output = xcodebuild('build', scheme, configuration, for_simulator, true)
-            parsed_output = parse_xcodebuild_output(output)
-            translate_output_to_linter_messages(parsed_output)
-          end
+        output = xcodebuild('build', scheme, configuration, for_simulator, true)
+        parsed_output = parse_xcodebuild_output(output)
+        translate_output_to_linter_messages(parsed_output)
         end
       end
     end
@@ -731,13 +744,45 @@ module Pod
       end
 
       if copy_framework
-        built_pod_dir = Pathname.new(Pathname.pwd).join('BuiltPods', "#{configuration}-#{build_platform_dir}")
+        tmp_frameworks_dir = Pathname.new(frameworks_dir).join("#{configuration}-#{build_platform_dir}")
         src_dir = Pathname.new(derivedDataPath).join('Build', 'Products', "#{configuration}-#{build_platform_dir}", scheme)
-        FileUtils.mkdir_p(built_pod_dir)
-        FileUtils.cp_r(src_dir, built_pod_dir)
+        FileUtils.mkdir_p(tmp_frameworks_dir)
+        FileUtils.cp_r(src_dir, tmp_frameworks_dir)
       end
 
       output
+    end
+
+    def make_fat_framework(scheme, configuration)
+      case consumer.platform_name
+      when :mac
+        device_suffix = "macosx"
+      when :ios
+        simulator_suffix = "iphonesimulator"
+        device_suffix = "iphoneos"
+      when :watchos
+        simulator_suffix = "watchsimulator"
+        device_suffix = "watchos"
+      when :tvos
+        simulator_suffix = "appletvsimulator"
+        device_suffix = "appletvos"
+      end
+
+      # copy device version of framework into results directory
+      built_pod_dir = Pathname.new(Pathname.pwd).join('BuiltPods', "#{configuration}")
+      device_framework_dir = Pathname.new(frameworks_dir).join("#{configuration}-#{device_suffix}", scheme)
+      FileUtils.mkdir_p(built_pod_dir)
+      FileUtils.cp_r(device_framework_dir, built_pod_dir)
+
+      return unless simulator_suffix
+
+      # replace executable with fat version
+      simulator_executable_path = Pathname.new(frameworks_dir).join("#{configuration}-#{simulator_suffix}",
+                                                                    scheme, "#{scheme}.framework", scheme)
+      device_executable_path = Pathname.new(device_framework_dir).join("#{scheme}.framework", scheme)
+      fat_executable_path = Pathname.new(built_pod_dir).join(scheme, "#{scheme}.framework", scheme)
+      command = %W(-create -output #{fat_executable_path} #{simulator_executable_path} #{device_executable_path})
+      Executable.execute_command("lipo", command, true)
     end
 
     # Executes the given command in the current working directory.
