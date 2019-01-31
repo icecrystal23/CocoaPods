@@ -1,39 +1,33 @@
 module Pod
   class Command
     class Lib < Command
-      class Lint < Lib
-        self.summary = 'Validates a Pod'
+      class Build < Lib
+        self.summary = 'Builds a Pod'
 
         self.description = <<-DESC
-          Validates the Pod using the files in the working directory.
+          Compiles the Pod using the files in the working directory.
         DESC
 
         def self.options
           [
-              ['--quick', 'Lint skips checks that would require to download and build the spec'],
-              ['--allow-warnings', 'Lint validates even if warnings are present'],
-              ['--subspec=NAME', 'Lint validates only the given subspec'],
-              ['--no-subspecs', 'Lint skips validation of subspecs'],
-              ['--no-clean', 'Lint leaves the build directory intact for inspection'],
-              ['--fail-fast', 'Lint stops on the first failing platform or subspec'],
-              ['--use-libraries', 'Lint uses static libraries to install the spec'],
-              ['--use-modular-headers', 'Lint uses modular headers during installation'],
+              ['--allow-warnings', 'Build succeeds even if warnings are present'],
+              ['--subspec=NAME', 'Build only the given subspec'],
+              ['--no-subspecs', 'Build skips subspecs'],
+              ['--no-clean', 'Build leaves the build directory intact for inspection'],
+              ['--fail-fast', 'Build stops on the first failing platform or subspec'],
+              ['--use-libraries', 'Build uses static libraries to install the spec'],
+              ['--use-modular-headers', 'Build uses modular headers during installation'],
               ['--sources=https://github.com/artsy/Specs,master', 'The sources from which to pull dependent pods ' \
              '(defaults to https://github.com/CocoaPods/Specs.git). ' \
              'Multiple sources must be comma-delimited.'],
-              ['--platforms=ios,macos', 'Lint against specific platforms' \
+              ['--platforms=ios,macos', 'Build against specific platforms' \
               '(defaults to all platforms supported by the podspec).' \
               'Multiple platforms must be comma-delimited'],
-              ['--private', 'Lint skips checks that apply only to public specs'],
-              ['--swift-version=VERSION', 'The SWIFT_VERSION that should be used to lint the spec. ' \
-             'This takes precedence over a .swift-version file.'],
-              ['--skip-import-validation', 'Lint skips validating that the pod can be imported'],
-              ['--skip-tests', 'Lint skips building and running tests during validation'],
+              ['--skip-tests', 'Build skips building and running tests'],
           ].concat(super)
         end
 
         def initialize(argv)
-          @quick           = argv.flag?('quick')
           @allow_warnings  = argv.flag?('allow-warnings')
           @clean           = argv.flag?('clean', true)
           @fail_fast       = argv.flag?('fail-fast', false)
@@ -43,11 +37,8 @@ module Pod
           @use_modular_headers = argv.flag?('use-modular-headers')
           @source_urls     = argv.option('sources', 'https://github.com/CocoaPods/Specs.git').split(',')
           @platforms       = argv.option('platforms', '').split(',')
-          @private         = argv.flag?('private', false)
-          @swift_version   = argv.option('swift-version', nil)
-          @skip_import_validation = argv.flag?('skip-import-validation', false)
-          @skip_tests = argv.flag?('skip-tests', false)
-          @podspecs_paths = argv.arguments!
+          @skip_tests      = argv.flag?('skip-tests', false)
+          @podspecs_paths  = argv.arguments!
           super
         end
 
@@ -57,33 +48,29 @@ module Pod
 
         def run
           UI.puts
-          podspecs_to_lint.each do |podspec|
-            validator                = Validator.new(podspec, @source_urls, @platforms)
-            validator.local          = true
-            validator.quick          = @quick
-            validator.no_clean       = !@clean
-            validator.fail_fast      = @fail_fast
-            validator.allow_warnings = @allow_warnings
-            validator.no_subspecs    = !@subspecs || @only_subspec
-            validator.only_subspec   = @only_subspec
-            validator.use_frameworks = @use_frameworks
-            validator.use_modular_headers = @use_modular_headers
-            validator.ignore_public_only_results = @private
-            validator.swift_version = @swift_version
-            validator.skip_import_validation = @skip_import_validation
-            validator.skip_tests = @skip_tests
-            validator.validate
+          podspecs_to_build.each do |podspec|
+            builder                = Builder.new(podspec, @source_urls, @platforms)
+            builder.local          = true
+            builder.no_clean       = !@clean
+            builder.fail_fast      = @fail_fast
+            builder.allow_warnings = @allow_warnings
+            builder.no_subspecs    = !@subspecs || @only_subspec
+            builder.only_subspec   = @only_subspec
+            builder.use_frameworks = @use_frameworks
+            builder.use_modular_headers = @use_modular_headers
+            builder.skip_tests = @skip_tests
+            builder.build
 
             unless @clean
-              UI.puts "Pods workspace available at `#{validator.validation_dir}/App.xcworkspace` for inspection."
+              UI.puts "Pods workspace available at `#{builder.build_dir}/App.xcworkspace` for inspection."
               UI.puts
             end
-            if validator.validated?
-              UI.puts "#{validator.spec.name} passed validation.".green
+            if builder.success?
+              UI.puts "#{builder.spec.name} passed built.".green
             else
               spec_name = podspec
-              spec_name = validator.spec.name if validator.spec
-              message = "#{spec_name} did not pass validation, due to #{validator.failure_reason}."
+              spec_name = builder.spec.name if builder.spec
+              message = "#{spec_name} could not build, due to #{builder.failure_reason}."
 
               if @clean
                 message << "\nYou can use the `--no-clean` option to inspect " \
@@ -106,7 +93,7 @@ module Pod
         # @raise  If no podspec is found.
         # @raise  If multiple podspecs are found.
         #
-        def podspecs_to_lint
+        def podspecs_to_build
           if !@podspecs_paths.empty?
             Array(@podspecs_paths)
           else

@@ -1,3 +1,4 @@
+require 'cocoapods/command/lib/build'
 require 'cocoapods/command/lib/create'
 require 'cocoapods/command/lib/lint'
 
