@@ -497,7 +497,7 @@ module Pod
       if !xcodebuild_available?
         UI.warn "Skipping compilation with `xcodebuild` because it can't be found.\n".yellow
       else
-        UI.message "\nBuilding configuration '#{configuration}' with `xcodebuild`#{' for simulator' if for_simulator}.\n".yellow do
+        UI.info "\nBuilding configuration '#{configuration}' with `xcodebuild`#{' for simulator' if for_simulator}.\n".yellow do
         output = xcodebuild('build', scheme, configuration, for_simulator, true)
         parsed_output = parse_xcodebuild_output(output)
         translate_output_to_linter_messages(parsed_output)
@@ -516,7 +516,7 @@ module Pod
       if !xcodebuild_available?
         UI.warn "Skipping test validation with `xcodebuild` because it can't be found.\n".yellow
       else
-        UI.message "\nTesting with `xcodebuild`.\n".yellow do
+        UI.info "\nTesting with `xcodebuild`.\n".yellow do
           pod_target = @installer.pod_targets.find { |pt| pt.pod_name == @spec.root.name }
           consumer.spec.test_specs.each do |test_spec|
             scheme = @installer.target_installation_results.first[pod_target.name].native_target_for_spec(test_spec)
