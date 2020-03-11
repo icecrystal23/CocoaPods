@@ -656,12 +656,19 @@ module Pod
           search_paths.concat file_accessors.
             flat_map(&:vendored_frameworks).
             map { |f| File.join '${PODS_ROOT}', f.dirname.relative_path_from(target.sandbox.root) }
-          # Include each slice in the framework search paths.
-          # Xcode will not search inside an .xcframework for headers within each slice
-          search_paths.concat vendored_xcframeworks.
-            flat_map(&:slices).
-            select { |slice| slice.platform.symbolic_name == target.platform.symbolic_name }.
-            flat_map { |slice| File.join '${PODS_ROOT}', slice.path.dirname.relative_path_from(target.sandbox.root) }
+
+          # For xcframeworks, include the current architecture for each platform
+          for xcframework in vendored_xcframeworks
+            xcframework_search_paths = xcframework.slices.
+             select { |slice| slice.platform.symbolic_name == target.platform.symbolic_name }.
+             map { |slice| slice.platform.symbolic_name }.
+             uniq.
+             map { |platform_name| 
+              File.join '${PODS_ROOT}', xcframework.path.relative_path_from(target.sandbox.root), platform_name.to_s + '-${CURRENT_ARCH}'
+            }
+            search_paths.concat xcframework_search_paths
+          end
+            
           search_paths
         end
 
